@@ -34,11 +34,9 @@ Packet* TCPhost::write_packet(Packet* p, uint32_t dstip=-1, uint32_t srcip=-1, u
     if(srcip != -1) header->srcip = srcip;
     if(seqnum != -1) header->seqnum = seqnum;
     if(acknum != -1) header->acknum = acknum;
-//    header->SYN_TCP = synflag;
-//    header->ACK_TCP = ackflag;
-//    header->FIN = finflag;
     return packet;
 }
+
 Packet* TCPhost::make_packet(uint32_t dstip, uint32_t srcip, uint32_t seqnum, uint32_t acknum,
                                       bool synflag=false, bool ackflag=false, bool finflag=false){
     WritablePacket *packet = Packet::make(0,0,sizeof(struct TCPheader), 0);
@@ -108,14 +106,14 @@ void TCPhost::push(int port, Packet* packet)
             conn->timer.schedule_after_msec(TIME_OUT);
             conn->state = ACTIVE_PENDING;
             conn->window_unacked.push_back(syn->clone());
-            conn->window_waiting.push_back(packet);
+            conn->window_waiting.push_back(packet->clone());
             click_chatter("Sending SYN(SEQ = %u) to %u.", syn_header->seqnum, syn_header->dstip);
             output(1).push(syn);
             //timer
         }
         else if(conn->state != ESTABLISHED){
             click_chatter("Connection unestablished, Packet Waiting.");
-            conn->window_waiting.push_back(packet);
+            conn->window_waiting.push_back(packet->clone());
         }
         else{
             if(conn->window_unacked.size()<WINDOW_SIZE){//window not full
@@ -129,7 +127,7 @@ void TCPhost::push(int port, Packet* packet)
             }
             else{//window full
                 click_chatter("Window full, Packet Waiting.");
-                conn->window_waiting.push_back(packet);
+                conn->window_waiting.push_back(packet->clone());
             }
         }        
 
@@ -177,6 +175,21 @@ void TCPhost::push(int port, Packet* packet)
                 output(1).push(ack);
                 conn->window_unacked.pop_front();
                 conn->timer.unschedule();
+                //begin sending
+                click_chatter("Number of waiting packets: %u.", conn->window_waiting.size());
+                while(conn->window_waiting.size()>0){
+                    click_chatter("Pop from queue.");
+                    Packet* poppacket = conn->window_waiting[0]->clone();
+                    conn->window_waiting.pop_front();
+                    //send it
+                    struct TCPheader* header = (struct TCPheader*) poppacket->data();
+                    conn->window_unacked.push_back(packet->clone());
+                    conn->_seq++;
+                    click_chatter("Sending DATA to %u, seq = %u.", header->dstip, header->seqnum);
+                    output(1).push(poppacket); //to ip layer
+                    conn->lfs++;
+
+                }
             }
 
         }
@@ -203,7 +216,7 @@ void TCPhost::push(int port, Packet* packet)
                     conn->window_unacked.pop_front();
                     conn->timer.unschedule();
                     click_chatter("Number of waiting packets: %u.", conn->window_waiting.size());
-                    if(conn->window_waiting.size()>0){
+                    while(conn->window_waiting.size()>0){
                         click_chatter("Pop from queue.");
                         Packet* poppacket = conn->window_waiting[0]->clone();
                         conn->window_waiting.pop_front();
@@ -234,7 +247,7 @@ void TCPhost::push(int port, Packet* packet)
                     while(conn->receiver_buf[0] != NULL){
                         //send ack for las
                         struct TCPheader* header = (struct TCPheader*) conn->receiver_buf[0]->data();
-                        Packet* ack = make_packet(header->srcip, _my_address, header->seqnum, 0, true);
+                        Packet* ack = make_packet(header->srcip, _my_address, header->seqnum, 0, false, true);
                         struct TCPheader* ack_header = (struct TCPheader*) ack->data();
                         click_chatter("Sending ACK_TCP for seq = %u to %u.", ack_header->seqnum, ack_header->dstip);
                         output(1).push(ack);
