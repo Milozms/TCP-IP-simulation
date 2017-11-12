@@ -13,6 +13,7 @@ enum connection_state {
     ACTIVE_DIS_PENDING,
     PASSIVE_DIS_PENDING
 };
+class TCPhost;
 class TCPconnection{
     public:
         uint16_t tcp_port;
@@ -23,7 +24,7 @@ class TCPconnection{
         int las;// receiver， last ack sent
         connection_state state;
         Timer timer;
-        TCPconnection(uint32_t dst, uint16_t port);
+        TCPconnection(uint32_t dst, uint16_t port, TCPhost* host);
         ~TCPconnection();
 };
 class TCPhost : public Element
@@ -39,7 +40,7 @@ class TCPhost : public Element
 
         void push(int port, Packet *p);
     private:
-        uint32_t _my_address;
+        uint32_t _my_address, _dstip;
         Vector<TCPconnection*> connections;
         TCPconnection* find_connection(uint32_t destip);
 };
