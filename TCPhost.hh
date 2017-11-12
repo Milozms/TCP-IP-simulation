@@ -39,6 +39,10 @@ class TCPhost : public Element
 		void run_timer(Timer*);
 
         void push(int port, Packet *p);
+		Packet* write_packet(Packet* p, uint32_t dstip, uint32_t srcip, uint32_t seqnum, uint32_t acknum,
+								  bool synflag, bool ackflag, bool finflag);
+		Packet* make_packet(uint32_t dstip, uint32_t srcip, uint32_t seqnum, uint32_t acknum,
+								 bool synflag, bool ackflag, bool finflag);
     private:
         uint32_t _my_address, _dstip;
         Vector<TCPconnection*> connections;
