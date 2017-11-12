@@ -57,7 +57,8 @@ void TCPhost::run_timer(Timer* timer){
         TCPconnection* conn = *i;
         if(timer == &(conn->timer)){
             if(conn->state == ACTIVE_PENDING){
-                Packet* syn = write_packet(conn->window_unacked[0]);
+                //Packet* syn = write_packet(conn->window_unacked[0]);//Don't!!!
+                Packet *syn = make_packet(conn->dstip, _my_address, conn->_seq, 0, true);
                 struct TCPheader* syn_header = (struct TCPheader*) syn->data();
                 click_chatter("Sending SYN(SEQ = %u) to %u.", syn_header->seqnum, syn_header->dstip);
                 output(1).push(syn);
@@ -105,7 +106,7 @@ void TCPhost::push(int port, Packet* packet)
             conn->timer.initialize(this);
             conn->timer.schedule_after_msec(TIME_OUT);
             conn->state = ACTIVE_PENDING;
-            conn->window_unacked.push_back(syn->clone());
+            //conn->window_unacked.push_back(syn->clone()); // Don't!!!
             conn->window_waiting.push_back(packet->clone());
             click_chatter("Sending SYN(SEQ = %u) to %u.", syn_header->seqnum, syn_header->dstip);
             output(1).push(syn);
@@ -153,7 +154,7 @@ void TCPhost::push(int port, Packet* packet)
                 //syn_heaser->dstport
 
                 click_chatter("Sending SYN ACK(SEQ = %u, ACK = %u) to %u.", syn_header->seqnum, syn_header->acknum, syn_header->dstip);
-                conn->las++;
+                //conn->las++;
                 conn->window_unacked.push_back(syn->clone());
                 output(1).push(syn);
                 conn->timer.initialize(this);
@@ -173,13 +174,13 @@ void TCPhost::push(int port, Packet* packet)
                 struct TCPheader* ack_header = (struct TCPheader*) ack->data();
                 click_chatter("Sending ACK_TCP(SEQ = %u, ACK = %u) to %u.", ack_header->seqnum, ack_header->acknum, ack_header->dstip);
                 output(1).push(ack);
-                conn->window_unacked.pop_front();
+                //conn->window_unacked.pop_front(); //Don't!!!
                 conn->timer.unschedule();
                 //begin sending
                 click_chatter("Number of waiting packets: %u.", conn->window_waiting.size());
                 while(conn->window_waiting.size()>0){
                     click_chatter("Pop from queue.");
-                    Packet* poppacket = conn->window_waiting[0]->clone();
+                    Packet* poppacket = write_packet(conn->window_waiting[0], -1, -1, conn->_seq);
                     conn->window_waiting.pop_front();
                     //send it
                     struct TCPheader* header = (struct TCPheader*) poppacket->data();
@@ -218,7 +219,7 @@ void TCPhost::push(int port, Packet* packet)
                     click_chatter("Number of waiting packets: %u.", conn->window_waiting.size());
                     while(conn->window_waiting.size()>0){
                         click_chatter("Pop from queue.");
-                        Packet* poppacket = conn->window_waiting[0]->clone();
+                        Packet* poppacket = write_packet(conn->window_waiting[0], -1, -1, conn->_seq);
                         conn->window_waiting.pop_front();
                         //send it
                         struct TCPheader* header = (struct TCPheader*) poppacket->data();
