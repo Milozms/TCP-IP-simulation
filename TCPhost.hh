@@ -16,7 +16,7 @@ enum connection_state {
 	TIME_WAIT,
 	CLOSE_WAIT,
 	LAST_ACK,
-	PASSIVE_DIS_PENDING
+	CLOSED
 };
 class TCPhost;
 class TCPconnection{

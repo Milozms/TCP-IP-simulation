@@ -123,35 +123,38 @@ void TCPhost::push(int port, Packet* packet)
             conn->timer.schedule_after_msec(TIME_OUT);
             //timer
         }
-        else if(header->FIN){
-            Packet* fin = make_packet(header->dstip, _my_address, conn->_seq, 0, false, false, true);
-            click_chatter("Sending FIN(SEQ = %u).", conn->_seq);
-            output(1).push(fin);
-            conn->finseq = conn->_seq;
-            conn->state = FIN_WAIT1;
+        else if(conn->state == ESTABLISHED){
+            if(header->FIN){
+                Packet* fin = make_packet(header->dstip, _my_address, conn->_seq, 0, false, false, true);
+                click_chatter("Sending FIN(SEQ = %u).", conn->_seq);
+                output(1).push(fin);
+                conn->finseq = conn->_seq;
+                conn->state = FIN_WAIT1;
+            }
+            else {
+                if(conn->window_unacked.size()<WINDOW_SIZE){//window not full
+                    Packet* new_packet = write_packet(packet, -1, _my_address, conn->_seq, -1);
+                    TCPheader* new_packet_header = (struct TCPheader*) new_packet->data();
+                    conn->window_unacked.push_back(new_packet->clone());
+                    click_chatter("Sending DATA to %u, seq = %u.", new_packet_header->dstip, new_packet_header->seqnum);
+                    click_chatter("Push into window_unacked, seq = %u, position 1.", new_packet_header->seqnum);
+                    conn->_seq++;
+                    click_chatter("Now seq = %u.", conn->_seq);
+                    output(1).push(new_packet); //to ip layer
+//                conn->timer.schedule_after_msec(TIME_OUT);
+                    conn->lfs++;
+                }
+                else{//window full
+                    click_chatter("Window full, Packet Waiting, push into queue.");
+                    conn->window_waiting.push_back(packet->clone());
+                }
+            }
         }
-        else if(conn->state != ESTABLISHED){
+        else if(conn->state != ESTABLISHED && conn->state != CLOSED){
             click_chatter("Connection unestablished, Packet Waiting, push into queue.");
             conn->window_waiting.push_back(packet->clone());
         }
-        else {
-            if(conn->window_unacked.size()<WINDOW_SIZE){//window not full
-                Packet* new_packet = write_packet(packet, -1, _my_address, conn->_seq, -1);
-                TCPheader* new_packet_header = (struct TCPheader*) new_packet->data();
-                conn->window_unacked.push_back(new_packet->clone());
-                click_chatter("Sending DATA to %u, seq = %u.", new_packet_header->dstip, new_packet_header->seqnum);
-                click_chatter("Push into window_unacked, seq = %u, position 1.", new_packet_header->seqnum);
-                conn->_seq++;
-                click_chatter("Now seq = %u.", conn->_seq);
-                output(1).push(new_packet); //to ip layer
-//                conn->timer.schedule_after_msec(TIME_OUT);
-                conn->lfs++;
-            }
-            else{//window full
-                click_chatter("Window full, Packet Waiting, push into queue.");
-                conn->window_waiting.push_back(packet->clone());
-            }
-        }
+
 
     }
     else if(port == 1){//data from ip layer
@@ -371,16 +374,16 @@ void TCPhost::push(int port, Packet* packet)
                 click_chatter("Sending ACK for FIN, (SEQ = %u, ACK = %u).", conn->_seq, header->seqnum+1);
                 conn->finacknum = header->seqnum+1;
                 output(1).push(fin_ack);
-                conn->state = IDLE;
-                click_chatter("New state: IDLE.");
+                conn->state = CLOSED;
+                click_chatter("New state: CLOSED.");
             }
         }
         else if(conn->state == CLOSING){
             if(header->ACK_TCP){
                 click_chatter("Receive ACK for FIN, seq = %u, ack = %u, current state: CLOSING.", header->seqnum, header->acknum);
                 if(header->acknum==conn->finseq + 1) {
-                    conn->state = IDLE;
-                    click_chatter("New state: IDLE.");
+                    conn->state = CLOSED;
+                    click_chatter("New state: CLOSED.");
                 }
             }
 
@@ -392,15 +395,15 @@ void TCPhost::push(int port, Packet* packet)
         else if(conn->state == LAST_ACK){
             if(header->ACK_TCP){
                 click_chatter("Receive ACK for FIN, seq = %u, ack = %u, current state: LAST_ACK.", header->seqnum, header->acknum);
-                if(header->seqnum==conn->finseq + 1){
-                    conn->state = IDLE;
-                    click_chatter("New state: IDLE.");
+                if(header->acknum==conn->finseq + 1){
+                    conn->state = CLOSED;
+                    click_chatter("New state: CLOSED.");
                 }
             }
         }
         else if(conn->state == TIME_OUT){
-            conn->state = IDLE;
-            click_chatter("New state: IDLE.");
+            conn->state = CLOSED;
+            click_chatter("New state: CLOSED.");
 
         }
     }
