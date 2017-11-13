@@ -401,7 +401,7 @@ void TCPhost::push(int port, Packet* packet)
                 }
             }
         }
-        else if(conn->state == TIME_OUT){
+        else if(conn->state == TIME_WAIT){
             conn->state = CLOSED;
             click_chatter("New state: CLOSED.");
 
