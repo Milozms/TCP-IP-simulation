@@ -7,9 +7,10 @@
 #include "TCPpacket.hh"
 #define WINDOW_SIZE 100
 #define RECV_BUF_SIZE 100
-#define TIME_OUT 1000
+//#define TIME_OUT 3000
 CLICK_DECLS
-TCPconnection::TCPconnection(uint32_t dst, uint16_t port, TCPhost* host): dstip(dst),tcp_port(port),_seq(1),window_unacked(0, NULL),
+TCPconnection::TCPconnection(uint32_t dst, uint16_t port, TCPhost* host): dstip(dst),tcp_port(port),_seq(1),synseq(1),
+synackseq(1), window_unacked(0, NULL),
 window_waiting(0, NULL),receiver_buf(RECV_BUF_SIZE,NULL),state(IDLE),lfs(0),las(0),lar(0), timer(host){}
 TCPhost::TCPhost():connections(0, NULL) {}
 TCPhost::~TCPhost() {}
@@ -23,7 +24,7 @@ TCPconnection* TCPhost::find_connection(uint32_t destip){
 }
 int TCPhost::configure(Vector<String> &conf, ErrorHandler *errh){
 ////
-    Args(conf, this, errh).read_mp("MY_IP", _my_address).read_mp("DST_IP", _dstip).complete();
+    Args(conf, this, errh).read_mp("MY_IP", _my_address).read_mp("DST_IP", _dstip).read_mp("TIME_OUT", TIME_OUT).complete();
     return 0;
 }
 Packet* TCPhost::write_packet(Packet* p, uint32_t dstip=-1, uint32_t srcip=-1, uint32_t seqnum=-1, uint32_t acknum=-1,
@@ -52,34 +53,34 @@ Packet* TCPhost::make_packet(uint32_t dstip, uint32_t srcip, uint32_t seqnum, ui
     return packet;
 }
 void TCPhost::run_timer(Timer* timer){
-    click_chatter("Timer.");
+    click_chatter("Timer. Num of connections = %u.", connections.size());
     for(Vector<TCPconnection*>::const_iterator i = connections.begin();i!=connections.end();i++){
         TCPconnection* conn = *i;
+//        click_chatter("Timer finding.");
         if(timer == &(conn->timer)){
+//            click_chatter("Find right timer.");
             if(conn->state == ACTIVE_PENDING){
                 //Packet* syn = write_packet(conn->window_unacked[0]);//Don't!!!
                 Packet *syn = make_packet(conn->dstip, _my_address, conn->_seq, 0, true);
                 struct TCPheader* syn_header = (struct TCPheader*) syn->data();
-                click_chatter("Sending SYN(SEQ = %u) to %u.", syn_header->seqnum, syn_header->dstip);
+                click_chatter("Retransmit: Sending SYN(SEQ = %u) to %u.", syn_header->seqnum, syn_header->dstip);
                 output(1).push(syn);
-                timer->schedule_after_msec(TIME_OUT);
             }
-            else if (conn->state == PASSIVE_PENDING){
+            else if (conn->state == PASSIVE_PENDING && conn->window_unacked.size()>0){
                 Packet* syn = write_packet(conn->window_unacked[0]);
                 struct TCPheader* syn_header = (struct TCPheader*) syn->data();
-                click_chatter("Sending SYN ACK(SEQ = %u, ACK = %u) to %u.", syn_header->seqnum, syn_header->acknum, syn_header->dstip);
+                click_chatter("Retransmit: Sending SYN ACK(SEQ = %u, ACK = %u) to %u.", syn_header->seqnum, syn_header->acknum, syn_header->dstip);
                 output(1).push(syn);
-                timer->schedule_after_msec(TIME_OUT);
             }
-            else{
+            else if(conn->window_unacked.size()>0){
                 Packet* pkt = write_packet(conn->window_unacked[0]);
                 struct TCPheader* header = (struct TCPheader*) pkt->data();
-                click_chatter("Sending DATA to %u, seq = %u.", header->dstip, header->seqnum);
+                click_chatter("Retransmit: Sending DATA to %u, seq = %u.", header->dstip, header->seqnum);
                 output(1).push(pkt);
-                timer->schedule_after_msec(TIME_OUT);
             }
         }
     }
+    timer->schedule_after_msec(TIME_OUT);
     click_chatter("Timer end.");
 }
 //input port 0: from ip
@@ -102,18 +103,19 @@ void TCPhost::push(int port, Packet* packet)
 //            Packet* syn = make_packet(conn->dstip, _my_address, conn->_seq, 0, true);
             struct TCPheader* syn_header = (struct TCPheader*) syn->data();
             //conn->_seq++;
-
-            conn->timer.initialize(this);
-            conn->timer.schedule_after_msec(TIME_OUT);
             conn->state = ACTIVE_PENDING;
             //conn->window_unacked.push_back(syn->clone()); // Don't!!!
             conn->window_waiting.push_back(packet->clone());
+            click_chatter("Connection unestablished, Packet Waiting, push into queue.");
             click_chatter("Sending SYN(SEQ = %u) to %u.", syn_header->seqnum, syn_header->dstip);
+            conn->synseq = syn_header->seqnum;
             output(1).push(syn);
+            conn->timer.initialize(this);
+            conn->timer.schedule_after_msec(TIME_OUT);
             //timer
         }
         else if(conn->state != ESTABLISHED){
-            click_chatter("Connection unestablished, Packet Waiting.");
+            click_chatter("Connection unestablished, Packet Waiting, push into queue.");
             conn->window_waiting.push_back(packet->clone());
         }
         else{
@@ -121,13 +123,16 @@ void TCPhost::push(int port, Packet* packet)
                 Packet* new_packet = write_packet(packet, -1, _my_address, conn->_seq, -1);
                 TCPheader* new_packet_header = (struct TCPheader*) new_packet->data();
                 conn->window_unacked.push_back(new_packet->clone());
-                conn->_seq++;
                 click_chatter("Sending DATA to %u, seq = %u.", new_packet_header->dstip, new_packet_header->seqnum);
+                click_chatter("Push into window_unacked, seq = %u, position 1.", new_packet_header->seqnum);
+                conn->_seq++;
+                click_chatter("Now seq = %u.", conn->_seq);
                 output(1).push(new_packet); //to ip layer
+//                conn->timer.schedule_after_msec(TIME_OUT);
                 conn->lfs++;
             }
             else{//window full
-                click_chatter("Window full, Packet Waiting.");
+                click_chatter("Window full, Packet Waiting, push into queue.");
                 conn->window_waiting.push_back(packet->clone());
             }
         }        
@@ -154,7 +159,9 @@ void TCPhost::push(int port, Packet* packet)
                 //syn_heaser->dstport
 
                 click_chatter("Sending SYN ACK(SEQ = %u, ACK = %u) to %u.", syn_header->seqnum, syn_header->acknum, syn_header->dstip);
+                conn->synackseq = syn_header->seqnum;
                 //conn->las++;
+                click_chatter("Push into window_unacked, seq = %u, position 2.", syn_header->seqnum);
                 conn->window_unacked.push_back(syn->clone());
                 output(1).push(syn);
                 conn->timer.initialize(this);
@@ -166,7 +173,7 @@ void TCPhost::push(int port, Packet* packet)
         else if(header->SYN_TCP && header->ACK_TCP){
             click_chatter("Branch 2: receive SYN ACK, packet->seq = %u.", header->seqnum);
             //received syn ack
-            if(header->acknum == conn->_seq + 1){
+            if(header->acknum == conn->synseq + 1){
                 click_chatter("Receive SYN ACK, Connection to %u Established.", header->srcip);
                 conn->state = ESTABLISHED;
                 //send ack back
@@ -175,19 +182,22 @@ void TCPhost::push(int port, Packet* packet)
                 click_chatter("Sending ACK_TCP(SEQ = %u, ACK = %u) to %u.", ack_header->seqnum, ack_header->acknum, ack_header->dstip);
                 output(1).push(ack);
                 //conn->window_unacked.pop_front(); //Don't!!!
-                conn->timer.unschedule();
+//                conn->timer.unschedule();
                 //begin sending
                 click_chatter("Number of waiting packets: %u.", conn->window_waiting.size());
                 while(conn->window_waiting.size()>0){
-                    click_chatter("Pop from queue.");
+                    click_chatter("Pop from queue - window_waiting.");
                     Packet* poppacket = write_packet(conn->window_waiting[0], -1, -1, conn->_seq);
                     conn->window_waiting.pop_front();
                     //send it
                     struct TCPheader* header = (struct TCPheader*) poppacket->data();
-                    conn->window_unacked.push_back(packet->clone());
+                    conn->window_unacked.push_back(poppacket->clone());
                     conn->_seq++;
                     click_chatter("Sending DATA to %u, seq = %u.", header->dstip, header->seqnum);
+                    click_chatter("Push into window_unacked, seq = %u, position 3.", header->seqnum);
+                    click_chatter("Now seq = %u.", conn->_seq);
                     output(1).push(poppacket); //to ip layer
+//                    conn->timer.schedule_after_msec(TIME_OUT);
                     conn->lfs++;
 
                 }
@@ -202,33 +212,40 @@ void TCPhost::push(int port, Packet* packet)
             }
             else{
                 if(conn->state == PASSIVE_PENDING){
-                    if(header->acknum == conn->_seq+1){
+                    if(header->acknum == conn->synackseq+1){
                         //received ack for connection establish
                         click_chatter("Receive ACK_TCP, Connection to %u Established.", header->srcip);
                         conn->state = ESTABLISHED;
                         conn->window_unacked.pop_front();
-                        conn->timer.unschedule();
+//                        conn->timer.unschedule();
                     }
                 }
                 else if(conn->state == ESTABLISHED){
-                    click_chatter("Receive ACK_TCP, LAR = %u.", conn->lar);
-                    conn->lar++;
-                    //update sliding window
-                    conn->window_unacked.pop_front();
-                    conn->timer.unschedule();
-                    click_chatter("Number of waiting packets: %u.", conn->window_waiting.size());
-                    while(conn->window_waiting.size()>0){
-                        click_chatter("Pop from queue.");
-                        Packet* poppacket = write_packet(conn->window_waiting[0], -1, -1, conn->_seq);
-                        conn->window_waiting.pop_front();
-                        //send it
-                        struct TCPheader* header = (struct TCPheader*) poppacket->data();
-                        conn->window_unacked.push_back(packet->clone());
-                        conn->_seq++;
-                        click_chatter("Sending DATA to %u, seq = %u.", header->dstip, header->seqnum);
-                        output(1).push(poppacket); //to ip layer
-                        conn->lfs++;
-
+                    if(conn->lar+1 == header->seqnum){
+                        click_chatter("Receive ACK_TCP for seq = %u, LAR = %u.", header->seqnum, conn->lar);
+                        conn->lar++;
+                        //update sliding window
+                        conn->window_unacked.pop_front();
+//                    conn->timer.unschedule();
+                        click_chatter("Number of waiting packets: %u.", conn->window_waiting.size());
+                        while(conn->window_waiting.size()>0){
+                            click_chatter("Pop from queue - window_waiting.");
+                            Packet* poppacket = write_packet(conn->window_waiting[0], -1, -1, conn->_seq);
+                            conn->window_waiting.pop_front();
+                            //send it
+                            struct TCPheader* header = (struct TCPheader*) poppacket->data();
+                            conn->window_unacked.push_back(poppacket->clone());
+                            conn->_seq++;
+                            click_chatter("Sending DATA to %u, seq = %u.", header->dstip, header->seqnum);
+                            click_chatter("Push into window_unacked, seq = %u, position 4.", header->seqnum);
+                            click_chatter("Now seq = %u.", conn->_seq);
+                            output(1).push(poppacket); //to ip layer
+//                        conn->timer.schedule_after_msec(TIME_OUT);
+                            conn->lfs++;
+                        }
+                    }
+                    else{
+                        click_chatter("Receive extra ACK for seq = %u.", header->seqnum);
                     }
                 }
             }
@@ -239,8 +256,13 @@ void TCPhost::push(int port, Packet* packet)
             //buffer las+1~las+W
             if(conn!=NULL){
                 click_chatter("Receiving DATA, seq = %u.", header->seqnum);
-                if(header->seqnum > conn->las + RECV_BUF_SIZE || header->seqnum <= conn->las){
+                if(header->seqnum > conn->las + RECV_BUF_SIZE){
                     click_chatter("Buffer overflow, discard packet.");
+                }
+                else if(header->seqnum <= conn->las){
+                    click_chatter("Retransmit ACK_TCP for seq = %u.", header->seqnum);
+                    Packet* ack = make_packet(header->srcip, _my_address, header->seqnum, 0, false, true);
+                    output(1).push(ack);
                 }
                 else{
                     conn->receiver_buf[header->seqnum - conn->las - 1] = packet->clone();

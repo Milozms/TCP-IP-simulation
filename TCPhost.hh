@@ -18,7 +18,7 @@ class TCPconnection{
     public:
         uint16_t tcp_port;
         uint32_t dstip;
-        uint32_t _seq;
+        uint32_t _seq, synseq, synackseq;
         Vector<Packet*> window_unacked, window_waiting, receiver_buf;
         int lfs, lar; //sender, last frame sent, last ack received
         int las;// receiver， last ack sent
@@ -45,6 +45,7 @@ class TCPhost : public Element
 								 bool synflag, bool ackflag, bool finflag);
     private:
         uint32_t _my_address, _dstip;
+		uint32_t TIME_OUT;
         Vector<TCPconnection*> connections;
         TCPconnection* find_connection(uint32_t destip);
 };
