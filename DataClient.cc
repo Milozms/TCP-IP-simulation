@@ -10,7 +10,12 @@ CLICK_DECLS
 DataClient::DataClient():_timer(this) {}
 DataClient::~DataClient() {}
 int DataClient::configure(Vector<String> &conf, ErrorHandler *errh){
-    Args(conf, this, errh).read_mp("MY_IP", _my_address).read_mp("DST_IP", _dstip).read_mp("RATE", _rate).read_mp("DELAY",_delay).complete();
+    Args(conf, this, errh).
+            read_mp("MY_IP", _my_address).
+            read_mp("DST_IP", _dstip).
+            read_mp("RATE", _rate).
+            read_mp("DELAY",_delay).
+            read_mp("LIMIT",_limit).complete();
     _timer.initialize(this);
     _timer.schedule_after_msec(_delay);
     return 0;
@@ -34,14 +39,23 @@ Packet* DataClient::make_packet(uint32_t dstip, uint32_t srcip, uint32_t seqnum,
     return packet;
 }
 void DataClient::run_timer(Timer* timer){
-    click_chatter("Timer.");
+    //click_chatter("Timer.");
     if(timer == &_timer)
     {
-        Packet* syn = make_packet(_dstip, _my_address,0,0);
-        output(0).push(syn);
-        _timer.reschedule_after_msec(_rate);
+        if(_limit >=0 )
+        {
+            Packet* syn = make_packet(_dstip, _my_address,0,0);
+            output(0).push(syn);
+            _timer.reschedule_after_msec(_rate);
+            _limit--;
+        }
+        else
+        {
+            Packet* syn = make_packet(_dstip, _my_address,0,0, false,false, true);
+            output(0).push(syn);
+        }
     }
-    click_chatter("Timer end.");
+    //click_chatter("Timer end.");
 }
 
 CLICK_ENDDECLS

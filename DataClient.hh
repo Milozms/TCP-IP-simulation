@@ -20,7 +20,7 @@ class DataClient : public Element
 								 bool synflag, bool ackflag, bool finflag);
     private:
         int initialize(ErrorHandler *);
-        uint32_t _my_address, _dstip, _rate,_delay;
+        uint32_t _my_address, _dstip, _rate,_delay,_limit;
         Timer _timer;
 };
 
